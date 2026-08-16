@@ -1,54 +1,103 @@
-import { useState, useEffect } from 'react'
-import './App.css'
+import { useState, useEffect } from 'react';
+import Sidebar from './components/Sidebar';
+import Header from './components/Header';
+import DashboardView from './views/DashboardView';
+import DelaysView from './views/DelaysView';
+import OperatorsView from './views/OperatorsView';
+import BusesView from './views/BusesView';
+import StationsView from './views/StationsView';
+import ShiftsView from './views/ShiftsView';
+import AffectationsView from './views/AffectationsView';
+import LoginView from './views/LoginView';
 
 function App() {
-  const [status, setStatus] = useState('Connecté au Frontend Vite + React')
-  const [users, setUsers] = useState([])
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [activeTab, setActiveTab] = useState('dashboard');
+  const [theme, setTheme] = useState('light'); // Default Light theme as requested
+  const [isBackendOnline, setIsBackendOnline] = useState(false);
+  const [stats, setStats] = useState({ operatorsCount: 1420, busCount: 38 });
+
+  const toggleTheme = () => {
+    const newTheme = theme === 'light' ? 'dark' : 'light';
+    setTheme(newTheme);
+  };
+
+  const checkBackend = () => {
+    fetch('http://localhost:5001/api/transport/stats')
+      .then((res) => {
+        if (res.ok) return res.json();
+        throw new Error('Not ok');
+      })
+      .then((data) => {
+        setIsBackendOnline(true);
+        setStats(data);
+      })
+      .catch(() => {
+        setIsBackendOnline(false);
+      });
+  };
 
   useEffect(() => {
-    // API backend call example
-    fetch('http://localhost:5000/api/users')
-      .then(res => res.json())
-      .then(data => setUsers(data))
-      .catch(() => setStatus('Backend non démarré (http://localhost:5000)'))
-  }, [])
+    checkBackend();
+  }, []);
+
+  const getTitle = () => {
+    switch (activeTab) {
+      case 'dashboard': return 'Tableau de Bord Exécutif';
+      case 'delays': return 'Supervision & Analyse des Retards';
+      case 'operators': return 'Gestion des Opérateurs Yazaki';
+      case 'buses': return 'Flotte des Bus & Circuits';
+      case 'stations': return 'Stations de Ramassage & Régions';
+      case 'shifts': return 'Shifts & Planning Horaires';
+      case 'affectations': return 'Journal des Affectations et Pointages';
+      default: return 'YAZAKI Transport Management';
+    }
+  };
+
+  const renderActiveView = () => {
+    switch (activeTab) {
+      case 'dashboard':
+        return <DashboardView stats={stats} onNavigate={setActiveTab} />;
+      case 'delays':
+        return <DelaysView />;
+      case 'operators':
+        return <OperatorsView />;
+      case 'buses':
+        return <BusesView />;
+      case 'stations':
+        return <StationsView />;
+      case 'shifts':
+        return <ShiftsView />;
+      case 'affectations':
+        return <AffectationsView />;
+      default:
+        return <DashboardView stats={stats} onNavigate={setActiveTab} />;
+    }
+  };
+
+  if (!isAuthenticated) {
+    return <LoginView onLogin={() => setIsAuthenticated(true)} theme={theme} toggleTheme={toggleTheme} />;
+  }
 
   return (
-    <div className="app-container">
-      <header className="navbar glass-panel">
-        <div className="logo-section">
-          <span className="brand-badge">YAZAKI</span>
-          <h2>Transport Management System</h2>
-        </div>
-        <div className="user-profile">
-          <span className="status-indicator"></span>
-          <span>{status}</span>
-        </div>
-      </header>
-
-      <main className="dashboard-content">
-        <div className="hero-banner glass-panel">
-          <h1>Bienvenue sur la plateforme <span className="gradient-text">YAZAKI Transport</span></h1>
-          <p>Supervision en temps réel des opérateurs, des bus et de la gestion des retards.</p>
-        </div>
-
-        <div className="stats-grid">
-          <div className="stat-card glass-panel">
-            <span className="stat-label">Statut Backend API</span>
-            <h3 className="stat-value">{users.length > 0 ? 'En ligne' : 'En attente'}</h3>
-          </div>
-          <div className="stat-card glass-panel">
-            <span className="stat-label">Utilisateurs enregistrés</span>
-            <h3 className="stat-value">{users.length}</h3>
-          </div>
-          <div className="stat-card glass-panel">
-            <span className="stat-label">Projet</span>
-            <h3 className="stat-value">PFE 2026</h3>
-          </div>
-        </div>
-      </main>
+    <div className="app-layout" data-theme={theme}>
+      <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} onLogout={() => setIsAuthenticated(false)} />
+      
+      <div className="main-wrapper">
+        <Header 
+          activeTitle={getTitle()} 
+          isBackendOnline={isBackendOnline} 
+          onRefresh={checkBackend} 
+          theme={theme}
+          toggleTheme={toggleTheme}
+        />
+        
+        <main className="content-body">
+          {renderActiveView()}
+        </main>
+      </div>
     </div>
-  )
+  );
 }
 
-export default App
+export default App;
