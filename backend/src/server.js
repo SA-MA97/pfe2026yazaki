@@ -3,41 +3,43 @@ import cors from "cors";
 import dotenv from "dotenv";
 import pool from "./config/db.js"; 
 import userRoutes from "./routes/userRoutes.js";
+import transportRoutes from "./routes/transportRoutes.js";
 import errorHandler from "./middlewares/errorHandler.js";
-import { getAllUsersService,
-         createUserService,
-         getUserByIdService,
-         updateUserService,
-         deleteUserService
- } from "./models/userModel.js";
+import { initDatabaseTables } from "./models/transportModel.js";
 
 dotenv.config();
 
 const app = express();
 const port = process.env.PORT || 5001; 
 
-//middlewares
+// Middlewares
 app.use(express.json());
 app.use(cors());
 
-// routes
+// Routes
 app.use("/api/user", userRoutes);
+app.use("/api/transport", transportRoutes);
 
-//error handling middleware
-app.use(errorHandler);
-
-//Creat table before starting the server
-createUsersTable();
-
-//testing POSTGRES connection
-app.get("/",async(req , res )=>{
+// Root route - Database test
+app.get("/", async (req, res) => {
+  try {
     const result = await pool.query("SELECT current_database()");
-    res.send(`The database name is :${result.rows[0].current_database}`);
+    res.json({
+      status: "Online",
+      database: result.rows[0].current_database,
+      message: "API YAZAKI Transport Management fonctionnelle"
+    });
+  } catch (error) {
+    res.status(500).json({ status: "Error", message: error.message });
+  }
 });
 
+// Error handling middleware
+app.use(errorHandler);
 
-
-// server running 
-app.listen(port,()=> {
-    console.log(`server is running on http:localhost:${port}`);
+// Initialize DB tables and start server
+initDatabaseTables().then(() => {
+  app.listen(port, () => {
+    console.log(`🚀 Serveur Backend YAZAKI démarré sur : http://localhost:${port}`);
+  });
 });
