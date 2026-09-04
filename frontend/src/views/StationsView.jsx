@@ -1,11 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import { MapPin, Plus, Search, Bus, RefreshCw, Edit, Trash2 } from 'lucide-react';
+import { MapPin, Plus, Search, Bus, RefreshCw, Edit, Trash2, AlertCircle } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
-
-// Fix Leaflet's default icon path issues in React
 import icon from 'leaflet/dist/images/marker-icon.png';
 import iconShadow from 'leaflet/dist/images/marker-shadow.png';
+import SortableHeader from '../components/SortableHeader';
+import Pagination from '../components/Pagination';
+import { useSortableData } from '../hooks/useSortableData';
+import { validateForm, isFormValid, required, minLength, maxLength, validateLatitude, validateLongitude } from '../utils/validate';
+
+const FieldError = ({ error }) => error
+  ? <div className="field-error"><AlertCircle size={12} />{error}</div> : null;
 
 const customIcon = new L.divIcon({
   className: 'custom-map-marker',
@@ -24,24 +29,23 @@ function MapClickHandler({ onMapClick }) {
   return null;
 }
 
-export default function StationsView() {
+export default function StationsView({ onDataChange }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   
   const [buses, setBuses] = useState([]);
-  const [stations, setStations] = useState([
-    { id_station: 1, nom_station: 'Station Zarzouna Centre', nom_region: 'Bizerte Sud', nom_bus: 'Bus Bizerte 01', latitude: 37.2650, longitude: 9.8850 },
-    { id_station: 2, nom_station: 'Station Corniche Plage', nom_region: 'Bizerte Nord', nom_bus: 'Bus Bizerte 02', latitude: 37.2850, longitude: 9.8700 },
-    { id_station: 3, nom_station: 'Menzel Bourguiba', nom_region: 'Menzel Bourguiba', nom_bus: 'Bus MB 01', latitude: 37.1542, longitude: 9.7865 },
-    { id_station: 4, nom_station: 'Menzel Abderrahmane', nom_region: 'Bizerte Sud', nom_bus: 'Bus Bizerte 01', latitude: 37.2333, longitude: 9.8944 },
-    { id_station: 5, nom_station: 'Station Tinja', nom_region: 'Tinja', nom_bus: 'Bus MB 02', latitude: 37.1631, longitude: 9.7584 },
-    { id_station: 6, nom_station: 'Ras Jebel Centre', nom_region: 'Ras Jebel', nom_bus: 'Bus RJ 01', latitude: 37.2144, longitude: 10.1211 },
-    { id_station: 7, nom_station: 'Station Mateur', nom_region: 'Mateur', nom_bus: 'Bus Mateur 01', latitude: 37.0414, longitude: 9.6669 },
-    { id_station: 8, nom_station: 'Bizerte Centre Ville', nom_region: 'Bizerte Nord', nom_bus: 'Bus Bizerte 03', latitude: 37.2764, longitude: 9.8712 },
-  ]);
+  const [stations, setStations] = useState([]);
 
   const [currentStation, setCurrentStation] = useState({ id_station: null, nom_station: '', nom_region: '', id_bus: '', latitude: 37.2746, longitude: 9.8739 });
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [formErrors, setFormErrors] = useState({});
+  const [toastMsg, setToastMsg] = useState(null);
+
+  const addToast = (msg, type = 'success') => {
+    setToastMsg({ msg, type });
+    setTimeout(() => setToastMsg(null), 3500);
+  };
 
   const fetchStations = () => {
     fetch('http://localhost:5001/api/transport/stations')
@@ -51,10 +55,15 @@ export default function StationsView() {
       })
       .then(data => {
         if (Array.isArray(data) && data.length > 0) {
-          setStations(data);
+          const parsed = data.map(st => ({
+            ...st,
+            latitude: parseFloat(st.latitude),
+            longitude: parseFloat(st.longitude)
+          }));
+          setStations(parsed);
         }
       })
-      .catch(err => console.warn('Using local station mock:', err));
+      .catch(err => console.error('API Error', err));
 
     fetch('http://localhost:5001/api/transport/buses')
       .then(res => {
@@ -85,14 +94,24 @@ export default function StationsView() {
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (!currentStation.nom_station) return;
+    const errors = validateForm({
+      nom_station: [
+        required(currentStation.nom_station, 'Le nom de la station'),
+        minLength(currentStation.nom_station, 3, 'Le nom de la station'),
+        maxLength(currentStation.nom_station, 100, 'Le nom de la station'),
+      ],
+      latitude: [validateLatitude(currentStation.latitude)],
+      longitude: [validateLongitude(currentStation.longitude)],
+    });
+    setFormErrors(errors);
+    if (!isFormValid(errors)) return;
 
     const payload = {
-      nom_station: currentStation.nom_station.toLowerCase(),
-      nom_region: currentStation.nom_region.toLowerCase() || 'bizerte',
+      nom_station: currentStation.nom_station.trim().toLowerCase(),
+      nom_region: currentStation.nom_region?.trim().toLowerCase() || 'bizerte',
       id_bus: currentStation.id_bus || null,
-      latitude: currentStation.latitude || 37.2746,
-      longitude: currentStation.longitude || 9.8739
+      latitude: parseFloat(currentStation.latitude),
+      longitude: parseFloat(currentStation.longitude)
     };
 
     if (isEditing) {
@@ -102,52 +121,28 @@ export default function StationsView() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       })
-        .then(res => {
-          if (!res.ok) throw new Error('DB Error');
-          return res.json();
-        })
-        .then(() => fetchStations())
-        .catch(() => {
-          setStations(stations.map(st => st.id_station === currentStation.id_station ? { ...currentStation, ...payload } : st));
-        });
+        .then(res => { if (!res.ok) throw new Error(); return res.json(); })
+        .then(() => { fetchStations(); if (onDataChange) onDataChange(); addToast('Station mise à jour !'); })
+        .catch(() => addToast('Erreur lors de la modification', 'error'));
     } else {
-      // POST (Ajout)
       fetch('http://localhost:5001/api/transport/stations', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       })
-        .then(res => {
-          if (!res.ok) throw new Error('DB Error');
-          return res.json();
-        })
-        .then(() => fetchStations())
-        .catch(() => {
-          setStations([...stations, {
-            id_station: stations.length > 0 ? Math.max(...stations.map(s => s.id_station)) + 1 : 1,
-            nom_station: payload.nom_station,
-            nom_region: payload.nom_region,
-            nom_bus: 'bus non assigné',
-            latitude: payload.latitude,
-            longitude: payload.longitude
-          }]);
-        });
+        .then(res => { if (!res.ok) throw new Error(); return res.json(); })
+        .then(() => { fetchStations(); if (onDataChange) onDataChange(); addToast('Station ajoutée avec succès !'); })
+        .catch(() => addToast('Erreur lors de l\'ajout', 'error'));
     }
-
     setShowModal(false);
+    setFormErrors({});
   };
 
-  const handleDelete = (id) => {
-    if(!window.confirm('Voulez-vous vraiment supprimer cette station ?')) return;
-
-    fetch(`http://localhost:5001/api/transport/stations/${id}`, { method: 'DELETE' })
-      .then(res => {
-        if (!res.ok) throw new Error('DB Error');
-      })
-      .then(() => fetchStations())
-      .catch(() => {
-        setStations(stations.filter(st => st.id_station !== id));
-      });
+  const confirmDelete = () => {
+    fetch(`http://localhost:5001/api/transport/stations/${deleteTarget.id_station}`, { method: 'DELETE' })
+      .then(res => { if (!res.ok) throw new Error(); })
+      .then(() => { fetchStations(); if (onDataChange) onDataChange(); addToast('Station supprimée.', 'error'); })
+      .catch(() => addToast('Erreur lors de la suppression', 'error'))
+      .finally(() => setDeleteTarget(null));
   };
 
   const filteredStations = stations.filter(s => 
@@ -155,12 +150,29 @@ export default function StationsView() {
     (s.nom_region && s.nom_region.toLowerCase().includes(searchTerm.toLowerCase()))
   );
 
+  const { items: sortedStations, requestSort, sortConfig } = useSortableData(filteredStations);
+
+  // --- Pagination ---
+  const PER_PAGE = 50;
+  const [currentPage, setCurrentPage] = React.useState(1);
+  React.useEffect(() => { setCurrentPage(1); }, [searchTerm, sortConfig]);
+  const totalItems = sortedStations.length;
+  const pagedStations = sortedStations.slice((currentPage - 1) * PER_PAGE, currentPage * PER_PAGE);
+
   return (
     <div className="stations-view">
+      {/* Inline Toast */}
+      {toastMsg && (
+        <div style={{ position: 'fixed', top: '1.5rem', right: '1.5rem', zIndex: 9999 }}>
+          <div className="toast-item" style={{ '--toast-color': toastMsg.type === 'error' ? 'var(--yazaki-red)' : 'var(--accent-emerald)' }}>
+            {toastMsg.msg}
+          </div>
+        </div>
+      )}
       <div className="section-header">
         <div className="section-title-group">
           <h3>Stations & Régions (Carte Interactive)</h3>
-          <p>Localisation GPS et gestion CRUD des arrêts de bus de la région</p>
+          <p>Réseau de transport Yazaki — Région de Bizerte</p>
         </div>
 
         <div className="controls-bar">
@@ -190,7 +202,7 @@ export default function StationsView() {
           </div>
           
           <div style={{ flex: 1, position: 'relative', zIndex: 1, borderRadius: '0 0 var(--radius-xl) var(--radius-xl)', overflow: 'hidden' }}>
-            <MapContainer center={[37.24, 9.87]} zoom={11} style={{ height: '100%', width: '100%' }}>
+            <MapContainer center={[37.18, 9.90]} zoom={10} style={{ height: '100%', width: '100%' }}>
               <TileLayer
                 url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
                 attribution='&copy; OpenStreetMap contributors &copy; CARTO'
@@ -234,18 +246,16 @@ export default function StationsView() {
           <table className="custom-table">
             <thead>
               <tr>
-                <th>ID Station</th>
-                <th>Nom Station</th>
-                <th>Région / Zone</th>
-                <th>Bus Rattaché</th>
+                <SortableHeader label="Nom Station" sortKey="nom_station" sortConfig={sortConfig} requestSort={requestSort} />
+                <SortableHeader label="Région / Zone" sortKey="nom_region" sortConfig={sortConfig} requestSort={requestSort} />
+                <SortableHeader label="Bus Rattaché" sortKey="nom_bus" sortConfig={sortConfig} requestSort={requestSort} />
                 <th>Coordonnées GPS</th>
                 <th style={{ textAlign: 'right' }}>Actions</th>
               </tr>
             </thead>
             <tbody>
-              {filteredStations.map((st) => (
+              {pagedStations.map((st) => (
                 <tr key={st.id_station}>
-                  <td style={{ fontWeight: '700', color: 'var(--text-muted)' }}>#{st.id_station}</td>
                   <td style={{ fontWeight: '700', textTransform: 'capitalize' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                       <MapPin size={16} color="var(--yazaki-red)" />
@@ -267,7 +277,7 @@ export default function StationsView() {
                       <button className="btn-secondary" style={{ padding: '0.4rem 0.6rem' }} onClick={() => openEditModal(st)} title="Modifier">
                         <Edit size={14} color="var(--accent-blue)" />
                       </button>
-                      <button className="btn-secondary" style={{ padding: '0.4rem 0.6rem' }} onClick={() => handleDelete(st.id_station)} title="Supprimer">
+                      <button className="btn-secondary" style={{ padding: '0.4rem 0.6rem' }} onClick={() => setDeleteTarget(st)} title="Supprimer">
                         <Trash2 size={14} color="var(--yazaki-red)" />
                       </button>
                     </div>
@@ -282,6 +292,7 @@ export default function StationsView() {
             </tbody>
           </table>
         </div>
+        <Pagination total={totalItems} page={currentPage} perPage={PER_PAGE} onPageChange={setCurrentPage} />
       </div>
 
       {showModal && (
@@ -291,17 +302,15 @@ export default function StationsView() {
               <h3>{isEditing ? 'Modifier la Station' : 'Nouvelle Station'}</h3>
               <button className="close-btn" onClick={() => setShowModal(false)}>✕</button>
             </div>
-            <form onSubmit={handleSubmit}>
+            <form onSubmit={handleSubmit} noValidate>
               <div className="form-group">
-                <label>Nom de la Station</label>
-                <input 
-                  type="text" 
-                  className="form-control" 
-                  required
+                <label>Nom de la Station *</label>
+                <input type="text"
+                  className={`form-control ${formErrors.nom_station ? 'has-error' : ''}`}
                   placeholder="ex: station zarzouna"
                   value={currentStation.nom_station}
-                  onChange={(e) => setCurrentStation({ ...currentStation, nom_station: e.target.value })}
-                />
+                  onChange={(e) => { setCurrentStation({ ...currentStation, nom_station: e.target.value }); setFormErrors(p => ({ ...p, nom_station: null })); }} />
+                <FieldError error={formErrors.nom_station} />
               </div>
               <div className="form-group">
                 <label>Région / Quartier</label>
@@ -316,31 +325,27 @@ export default function StationsView() {
               
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                 <div className="form-group">
-                  <label>Latitude</label>
-                  <input 
-                    type="number" 
-                    step="any"
-                    className="form-control" 
+                  <label>Latitude * <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>(30–38)</span></label>
+                  <input type="number" step="any"
+                    className={`form-control ${formErrors.latitude ? 'has-error' : ''}`}
                     placeholder="37.2746"
                     value={currentStation.latitude}
-                    onChange={(e) => setCurrentStation({ ...currentStation, latitude: parseFloat(e.target.value) || '' })}
-                  />
+                    onChange={(e) => { setCurrentStation({ ...currentStation, latitude: e.target.value }); setFormErrors(p => ({ ...p, latitude: null })); }} />
+                  <FieldError error={formErrors.latitude} />
                 </div>
                 <div className="form-group">
-                  <label>Longitude</label>
-                  <input 
-                    type="number" 
-                    step="any"
-                    className="form-control" 
+                  <label>Longitude * <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>(7–12)</span></label>
+                  <input type="number" step="any"
+                    className={`form-control ${formErrors.longitude ? 'has-error' : ''}`}
                     placeholder="9.8739"
                     value={currentStation.longitude}
-                    onChange={(e) => setCurrentStation({ ...currentStation, longitude: parseFloat(e.target.value) || '' })}
-                  />
+                    onChange={(e) => { setCurrentStation({ ...currentStation, longitude: e.target.value }); setFormErrors(p => ({ ...p, longitude: null })); }} />
+                  <FieldError error={formErrors.longitude} />
                 </div>
               </div>
 
               <div className="form-group">
-                <label>Bus Rattaché (ID)</label>
+                <label>Bus Rattaché</label>
                 <select 
                   className="form-control"
                   value={currentStation.id_bus || ''}
@@ -357,6 +362,25 @@ export default function StationsView() {
                 <button type="submit" className="btn-primary">{isEditing ? 'Mettre à jour' : 'Enregistrer'}</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* DELETE Confirmation Modal */}
+      {deleteTarget && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: '420px', textAlign: 'center' }}>
+            <div style={{ width: '64px', height: '64px', borderRadius: '50%', background: 'rgba(230,0,18,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1.25rem' }}>
+              <AlertCircle size={28} color="var(--yazaki-red)" />
+            </div>
+            <h3 style={{ fontSize: '1.15rem', marginBottom: '0.5rem' }}>Confirmer la suppression</h3>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '1.75rem' }}>
+              Supprimer la station <strong>{deleteTarget.nom_station}</strong> ? Cette action est <strong style={{ color: 'var(--yazaki-red)' }}>irréversible</strong>.
+            </p>
+            <div className="form-actions">
+              <button className="btn-secondary" onClick={() => setDeleteTarget(null)}>Annuler</button>
+              <button className="btn-primary" style={{ background: 'var(--yazaki-gradient)' }} onClick={confirmDelete}>Oui, Supprimer</button>
+            </div>
           </div>
         </div>
       )}
