@@ -1,9 +1,9 @@
 // Standardized response funtion
 import { getAllUsersService,
-         createUserService,
-         getUserByIdService,
-         updateUserService,
-         deleteUserService
+         createUsersService,
+         getUsersByIdService,
+         updateUsersService,
+         deleteUsersService
  } from "../models/userModel.js";
 const handleResponse = (res, status, message, data=null) => {
     res.status(status).json({
@@ -13,10 +13,10 @@ const handleResponse = (res, status, message, data=null) => {
     });
 };
 
-export const creatUsers = async (req, res, next) => {
-    const { name, email } = req.body;
+export const createUsers = async (req, res, next) => {
+    const { name, email , password} = req.body;
     try {
-        const newUser = await createUserService(name, email);
+        const newUser = await createUsersService(name, email, password);
         handleResponse(res, 201, "User created successfully", newUser);
     } catch (error) {
         next(error);
@@ -32,10 +32,10 @@ export const getAllUsers = async (req, res, next) => {
     }
 }; 
 
-export const getUserById = async (req, res, next) => {
+export const getUsersById = async (req, res, next) => {
     const { id } = req.params;
     try {
-        const user = await getUserByIdService(id);
+        const user = await getUsersByIdService(id);
         if (!user) {
             return handleResponse(res, 404, "User not found");
         }
@@ -48,8 +48,9 @@ export const getUserById = async (req, res, next) => {
 export const updateUsers = async (req, res, next) => {
     const { name, email } = req.body;
     try {
-        const updateUser = await updateUserService(req.params.id, name, email);
-        handleResponse(res, 200, "User updated successfully", User);
+        const updateUsers = await updateUsersService(req.params.id, name, email, req.body.password);
+        if (!updateUsers) return handleResponse(res, 404, "User not found");
+        handleResponse(res, 200, "User updated successfully", updateUsers);
     } catch (error) {
         next(error);
     }
@@ -57,9 +58,9 @@ export const updateUsers = async (req, res, next) => {
 
 export const deleteUsers = async (req, res, next) => {
     try {
-        const deleteUser = await deleteUserService(req.params.id);
-        if (!deleteUser) return handleResponse(res, 404, "User not found");
-        handleResponse(res, 200, "User deleted successfully", deleteUser);
+        const deleteUsers = await deleteUsersService(req.params.id);
+        if (!deleteUsers) return handleResponse(res, 404, "User not found");
+        handleResponse(res, 200, "User deleted successfully", deleteUsers);
     } catch (error) {
         next(error);
     }
