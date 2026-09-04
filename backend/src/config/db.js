@@ -12,7 +12,7 @@ const pool = new Pool({
 });
 
 pool.on("connect", () => {
-  console.log("⚡ Pool de connexion établi avec la Base de Données PostgreSQL");
+  console.log("✅ Pool de connexion établi avec la Base de Données PostgreSQL");
 });
 
 export default pool;

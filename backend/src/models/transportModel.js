@@ -1,4 +1,5 @@
 import pool from '../config/db.js';
+import { initAdminTable, seedDefaultAdmins } from './adminModel.js';
 
 // --- TABLE CREATION INITIALIZER IF NOT EXISTS ---
 export const initDatabaseTables = async () => {
@@ -38,6 +39,9 @@ export const initDatabaseTables = async () => {
         heure_arrivee TIME
       );
     `);
+    // Initialiser la table des admins + seeder les comptes par défaut
+    await initAdminTable();
+    await seedDefaultAdmins();
     console.log("✅ Tables Yazaki transport vérifiées / créées avec succès.");
   } catch (error) {
     console.error("⚠️ Erreur d'initialisation des tables :", error.message);
@@ -47,12 +51,19 @@ export const initDatabaseTables = async () => {
 // --- D_OPERATEURS ---
 export const getAllOperatorsDB = async () => {
   const result = await pool.query(`
-    SELECT o.mat, o.nom_prenom, s.nom_station as station, b.nom_bus as bus
-    FROM D_Operateurs o
-    LEFT JOIN F_Affectations f ON o.mat = f.mat
-    LEFT JOIN D_Stations s ON f.id_station = s.id_station
-    LEFT JOIN D_Bus b ON s.id_bus = b.id_bus
-    ORDER BY o.nom_prenom ASC
+    SELECT * FROM (
+      SELECT DISTINCT ON (o.mat) 
+        o.mat, 
+        o.nom_prenom, 
+        s.nom_station as station, 
+        b.nom_bus as bus
+      FROM D_Operateurs o
+      LEFT JOIN F_Affectations a ON o.mat = a.mat
+      LEFT JOIN D_Stations s ON a.id_station = s.id_station
+      LEFT JOIN D_Bus b ON s.id_bus = b.id_bus
+      ORDER BY o.mat ASC, a.Date_Affectation DESC
+    ) sub
+    ORDER BY sub.nom_prenom ASC
   `);
   return result.rows;
 };
@@ -91,22 +102,49 @@ export const createBusDB = async (nom_bus) => {
 };
 
 // --- D_STATIONS ---
+export const updateBusDB = async (id, nom_bus) => {
+  const result = await pool.query(
+    `UPDATE D_Bus SET nom_bus = $1 WHERE id_bus = $2 RETURNING *`,
+    [nom_bus, id]
+  );
+  return result.rows[0];
+};
+
+export const deleteBusDB = async (id) => {
+  await pool.query(`DELETE FROM D_Bus WHERE id_bus = $1`, [id]);
+};
+
 export const getAllStationsDB = async () => {
   const result = await pool.query(`
-    SELECT s.id_station, s.nom_station, s.nom_region, s.latitude, s.longitude, b.id_bus, b.nom_bus
+    SELECT s.id_station, s.nom_station, s.nom_region, s.latitude, s.longitude, b.id_bus, b.nom_bus 
     FROM D_Stations s
     LEFT JOIN D_Bus b ON s.id_bus = b.id_bus
-    ORDER BY s.id_station ASC
+    ORDER BY s.id_station DESC
   `);
   return result.rows;
 };
 
 export const createStationDB = async (nom_station, nom_region, id_bus, latitude, longitude) => {
   const result = await pool.query(
-    `INSERT INTO D_Stations (nom_station, nom_region, id_bus, latitude, longitude) VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-    [nom_station, nom_region, id_bus || null, latitude || 35.75, longitude || -5.83]
+    `INSERT INTO D_Stations (nom_station, nom_region, id_bus, latitude, longitude) 
+     VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+    [nom_station, nom_region, id_bus || null, latitude, longitude]
   );
   return result.rows[0];
+};
+
+export const updateStationDB = async (id, nom_station, nom_region, id_bus, latitude, longitude) => {
+  const result = await pool.query(
+    `UPDATE D_Stations 
+     SET nom_station = $1, nom_region = $2, id_bus = $3, latitude = $4, longitude = $5 
+     WHERE id_station = $6 RETURNING *`,
+    [nom_station, nom_region, id_bus || null, latitude, longitude, id]
+  );
+  return result.rows[0];
+};
+
+export const deleteStationDB = async (id) => {
+  await pool.query(`DELETE FROM D_Stations WHERE id_station = $1`, [id]);
 };
 
 // --- D_SHIFTS ---
@@ -123,6 +161,19 @@ export const createShiftDB = async (nom_shift, heure_depart_prevue) => {
   return result.rows[0];
 };
 
+export const deleteShiftDB = async (id) => {
+  const result = await pool.query(`DELETE FROM D_Shifts WHERE id_shift = $1 RETURNING *`, [id]);
+  return result.rows[0];
+};
+
+export const updateShiftDB = async (id, nom_shift, heure_depart_prevue) => {
+  const result = await pool.query(
+    `UPDATE D_Shifts SET nom_shift = $1, heure_depart_prevue = $2 WHERE id_shift = $3 RETURNING *`,
+    [nom_shift, heure_depart_prevue, id]
+  );
+  return result.rows[0];
+};
+
 // --- F_AFFECTATIONS & RETARDS ---
 export const getAllAffectationsDB = async () => {
   const result = await pool.query(`
@@ -132,8 +183,10 @@ export const getAllAffectationsDB = async () => {
       f.mat,
       o.nom_prenom as operator_name,
       s.nom_station as station,
+      s.id_station,
       b.nom_bus as bus,
       sh.nom_shift as shift,
+      sh.id_shift,
       sh.heure_depart_prevue as heure_prevue,
       f.heure_arrivee,
       EXTRACT(EPOCH FROM (f.heure_arrivee - sh.heure_depart_prevue))/60 as retard_minutes
@@ -147,11 +200,62 @@ export const getAllAffectationsDB = async () => {
   return result.rows;
 };
 
+// --- RETARDS UNIQUEMENT (toute la BDD) ---
+export const getAllDelaysDB = async () => {
+  const result = await pool.query(`
+    SELECT 
+      f.id_affectation,
+      f.Date_Affectation as date,
+      f.mat,
+      o.nom_prenom as operator_name,
+      s.nom_station as station,
+      s.id_station,
+      b.nom_bus as bus,
+      sh.nom_shift as shift,
+      sh.id_shift,
+      sh.heure_depart_prevue as heure_prevue,
+      f.heure_arrivee,
+      EXTRACT(EPOCH FROM (f.heure_arrivee - sh.heure_depart_prevue))/60 as retard_minutes
+    FROM F_Affectations f
+    LEFT JOIN D_Operateurs o ON f.mat = o.mat
+    LEFT JOIN D_Stations s ON f.id_station = s.id_station
+    LEFT JOIN D_Bus b ON s.id_bus = b.id_bus
+    LEFT JOIN D_Shifts sh ON f.id_shift = sh.id_shift
+    WHERE f.heure_arrivee > sh.heure_depart_prevue
+    ORDER BY retard_minutes DESC
+  `);
+  return result.rows;
+};
+
 export const createAffectationDB = async (date_affectation, mat, id_station, id_shift, heure_arrivee) => {
+  const dateObj = new Date(date_affectation || new Date());
+  const formattedDate = dateObj.toISOString().split('T')[0];
+  const year = dateObj.getFullYear();
+  const month = dateObj.getMonth() + 1;
+
+  // S'assurer que la date existe dans la dimension Temps pour éviter l'erreur de clé étrangère
+  await pool.query(
+    `INSERT INTO D_Calendrier (date, annee, mois) VALUES ($1, $2, $3) ON CONFLICT (date) DO NOTHING`,
+    [formattedDate, year, month]
+  );
+
   const result = await pool.query(
     `INSERT INTO F_Affectations (Date_Affectation, mat, id_station, id_shift, heure_arrivee)
      VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-    [date_affectation || new Date(), mat, id_station, id_shift, heure_arrivee]
+    [formattedDate, mat, id_station, id_shift, heure_arrivee]
+  );
+  return result.rows[0];
+};
+
+export const deleteAffectationDB = async (id) => {
+  const result = await pool.query(`DELETE FROM F_Affectations WHERE id_affectation = $1 RETURNING *`, [id]);
+  return result.rows[0];
+};
+
+export const updateAffectationDB = async (id, heure_arrivee, id_station, id_shift) => {
+  const result = await pool.query(
+    `UPDATE F_Affectations SET heure_arrivee = $1, id_station = $2, id_shift = $3 WHERE id_affectation = $4 RETURNING *`,
+    [heure_arrivee, id_station, id_shift, id]
   );
   return result.rows[0];
 };
@@ -164,15 +268,21 @@ export const getDashboardStatsDB = async () => {
   const delays = await pool.query(`
     SELECT 
       COUNT(*)::int as total_affectations,
-      AVG(CASE WHEN heure_arrivee > sh.heure_depart_prevue THEN EXTRACT(EPOCH FROM (heure_arrivee - sh.heure_depart_prevue))/60 ELSE 0 END)::numeric(10,1) as avg_delay
+      COUNT(CASE WHEN f.heure_arrivee <= sh.heure_depart_prevue THEN 1 END)::int as on_time_affectations,
+      AVG(CASE WHEN f.heure_arrivee > sh.heure_depart_prevue THEN EXTRACT(EPOCH FROM (f.heure_arrivee - sh.heure_depart_prevue))/60 ELSE 0 END)::numeric(10,1) as avg_delay
     FROM F_Affectations f
     LEFT JOIN D_Shifts sh ON f.id_shift = sh.id_shift
   `);
+
+  const total = delays.rows[0]?.total_affectations || 0;
+  const onTime = delays.rows[0]?.on_time_affectations || 0;
+  const punctuality = total > 0 ? ((onTime / total) * 100).toFixed(1) : 100;
 
   return {
     operatorsCount: opCount.rows[0]?.count || 0,
     busCount: busCount.rows[0]?.count || 0,
     stationCount: stationCount.rows[0]?.count || 0,
     avgDelay: delays.rows[0]?.avg_delay || 0,
+    punctuality: parseFloat(punctuality)
   };
 };
